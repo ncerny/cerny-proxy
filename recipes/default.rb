@@ -66,11 +66,17 @@ docker_container 'matchbox' do
   labels 'traefik.frontend.rule:Host:matchbox.delivered.cerny.cc'
 end
 
-# $ docker run -d --net=host -e 'CONSUL_LOCAL_CONFIG={"skip_leave_on_interrupt": true}' consul agent -server -bind=<external ip> -retry-join=<root agent ip> -bootstrap-expect=<number of server agents>
+docker_volume 'consul' do
+  action :create
+end
+
 docker_container 'consul' do
   network_mode 'host'
   env 'CONSUL_LOCAL_CONFIG={"skip_leave_on_interrupt": true}'
-  command "consul agent -server #{node['ipaddress']} -retry-join=proxy01 -retry-join=proxy02 -retry-join=proxy03 -bootstrap-expect=3"
+  command "agent -server -bind=#{node['ipaddress']} -retry-join=proxy01 -retry-join=proxy02 -retry-join=proxy03 -bootstrap-expect=3"
+  volumes [
+    'consul:/consul'
+  ]
   labels [
     'traefik.frontend.rule:Host:consul.delivered.cerny.cc',
     'traefik.frontend.rule:Path:/consul',
