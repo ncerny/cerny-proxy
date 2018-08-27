@@ -52,18 +52,27 @@ docker_container 'traefik' do
   volumes [
     '/var/run/docker.sock:/var/run/docker.sock'
   ]
-  command '--api --docker'
+  command '--api --docker --file'
 end
 
 docker_container 'hello' do
   repo 'nginxdemos/hello'
-  labels 'traefik.frontend.rule=Host:whoami.delivered.cerny.cc'
+  labels 'traefik.frontend.rule:Host:whoami.delivered.cerny.cc'
 end
 
-
-# docker_container 'matchbox' do
-#   repo 'ncerny/matchbox'
-#   port ['9080:9080', '9081:9081', '9631:9631']
-# end
+docker_container 'matchbox' do
+  repo 'ncerny/matchbox'
+  command '--channel delivered --strategy at-once'
+  labels 'traefik.frontend.rule:Host:matchbox.delivered.cerny.cc'
+end
 
 # $ docker run -d --net=host -e 'CONSUL_LOCAL_CONFIG={"skip_leave_on_interrupt": true}' consul agent -server -bind=<external ip> -retry-join=<root agent ip> -bootstrap-expect=<number of server agents>
+docer_container 'consul' do
+  network_mode 'host'
+  env 'CONSUL_LOCAL_CONFIG={"skip_leave_on_interrupt": true}'
+  command "consul agent -server #{node['ipaddress']} -retry-join=proxy01 -retry-join=proxy02 -retry-join=proxy03 -bootstrap-expect=3"
+  labels [
+    'traefik.frontend.rule:Host:consul.delivered.cerny.cc',
+    'traefik.frontend.rule:Path:/consul',
+  ]
+end
