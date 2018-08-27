@@ -40,30 +40,35 @@ docker_image 'nginx' do
   tag 'stable-alpine'
 end
 
+directory '/etc/traefik'
+
+template '/etc/traefik/traefik.toml' do
+  source 'traefik.toml.erb'
+end
+
 docker_container 'traefik' do
   repo 'traefik'
-  port [
-    '80:80',
-    '443:443',
-    '8080:8080',
-    '8006:8006',
-    '32400:32400'
-  ]
+  network_mode 'host'
   volumes [
-    '/var/run/docker.sock:/var/run/docker.sock'
+    '/var/run/docker.sock:/var/run/docker.sock',
+    '/etc/traefik:/etc/traefik'
   ]
-  command '--api --docker --file'
+  command '--api --docker --consul'
 end
 
 docker_container 'hello' do
   repo 'nginxdemos/hello'
-  labels 'traefik.frontend.rule:Host:whoami.delivered.cerny.cc'
+  labels [
+    "traefik.frontend.rule:Host:whoami.#{node['domain']}"
+    ]
 end
 
 docker_container 'matchbox' do
   repo 'ncerny/matchbox'
   command '--channel delivered --strategy at-once'
-  labels 'traefik.frontend.rule:Host:matchbox.delivered.cerny.cc'
+  labels [
+    "traefik.frontend.rule:Host:matchbox.#{node['domain']}"
+    ]
 end
 
 docker_volume 'consul' do
@@ -73,12 +78,11 @@ end
 docker_container 'consul' do
   network_mode 'host'
   env 'CONSUL_LOCAL_CONFIG={"skip_leave_on_interrupt": true}'
-  command "agent -server -bind=#{node['ipaddress']} -retry-join=proxy01 -retry-join=proxy02 -retry-join=proxy03 -bootstrap-expect=3"
+  command "agent -server -bind=#{node['ipaddress']} -retry-join=proxy01 -retry-join=proxy02 -retry-join=proxy03 -bootstrap-expect=3 -ui"
   volumes [
     'consul:/consul'
   ]
   labels [
-    'traefik.frontend.rule:Host:consul.delivered.cerny.cc',
-    'traefik.frontend.rule:Path:/consul',
+    "traefik.frontend.rule:Host:consul.#{node['domain']}"
   ]
 end
