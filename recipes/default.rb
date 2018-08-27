@@ -16,33 +16,54 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-include_recipe "cerny-loadbalancer::deps"
-package 'glb-redirect'
-kernel_module 'fou'
+include_recipe "cerny-loadbalancer::proxy"
 
-systemd_unit 'glb-redirect.service' do
-  content <<-EOU.gsub(/^\s+/, '')
-    [Unit]
-    Description=Configure GUE and IPTables Rules for GLB proxy layer.
-    After=network.target
-
-    [Service]
-    ExecStart=/bin/ip fou add port 19523 gue
-    ExecStartPost=/sbin/iptables -t raw -A INPUT -p udp -m udp --dport 19523 -j CT --notrack
-    ExecStartPost=/sbin/iptables -A INPUT -p udp -m udp --dport 19523 -j GLBREDIRECT
-    ExecStop=/bin/ip fou del port 19523 gue
-    RemainAfterExit=true
-
-    [Install]
-    WantedBy=multi-user.target
-  EOU
+docker_service 'default' do
+  action [:create, :start]
 end
 
-service 'glb-redirect' do
-  action [:enable, :start]
+%w(
+  quay.io/coreos/dnsmasq
+  ncerny/matchbox
+  consul
+  traefik
+  nginxdemos/hello
+).each do |image|
+  docker_image image do
+    action :pull
+    tag 'latest'
+  end
 end
 
-template '/etc/network/interfaces.d/tunl0.conf' do
-  source 'tunl0.conf.erb'
-  notifies :run, 'execute[ifup tunl0]', :immediately
+docker_image 'nginx' do
+  action :pull
+  tag 'stable-alpine'
 end
+
+docker_container 'traefik' do
+  repo 'traefik'
+  port [
+    '80:80',
+    '443:443',
+    '8080:8080',
+    '8006:8006',
+    '32400:32400'
+  ]
+  volumes [
+    '/var/run/docker.sock:/var/run/docker.sock'
+  ]
+  command '--api --docker'
+end
+
+docker_container 'hello' do
+  repo 'nginxdemos/hello'
+  labels 'traefik.frontend.rule=Host:whoami.delivered.cerny.cc'
+end
+
+
+# docker_container 'matchbox' do
+#   repo 'ncerny/matchbox'
+#   port ['9080:9080', '9081:9081', '9631:9631']
+# end
+
+# $ docker run -d --net=host -e 'CONSUL_LOCAL_CONFIG={"skip_leave_on_interrupt": true}' consul agent -server -bind=<external ip> -retry-join=<root agent ip> -bootstrap-expect=<number of server agents>
