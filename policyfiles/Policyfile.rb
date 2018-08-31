@@ -8,4 +8,3 @@ run_list 'cerny-proxy::default'
 
 default_source :supermarket
 cookbook 'cerny-proxy', path: '..'
-cookbook 'cerny-loadbalancer', github: 'ncerny/cerny-loadbalancer', branch: 'master'

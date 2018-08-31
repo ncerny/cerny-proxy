@@ -1,0 +1,101 @@
+<%- if node['domain'].eql?('infra.cerny.cc') %>
+defaultEntryPoints = ["https"]
+<%- else %>
+defaultEntryPoints = ["http", "https"]
+<%- end %>
+
+[entryPoints]
+<%- unless node['domain'].eql?('infra.cerny.cc') %>
+  [entryPoints.http]
+    address = ":80"
+
+<%- end %>
+  [entryPoints.https]
+    address = ":443"
+    [entryPoints.https.tls]
+
+[acme]
+  email = "ncerny@gmail.com"
+  storage = "traefik/acme/account"
+  entryPoint = "https"
+
+  [acme.dnsChallenge]
+    provider = "digitalocean"
+    delayBeforeCheck = 120
+
+<% # This should be fixed in Traefik 1.7.  Disabling acme until that release. %>
+<%- if false %>
+  [[acme.domains]]
+    main = '*.<%= node['domain'] %>'
+    sans = ['<%= node['domain'] %>']
+
+  <%- if node['domain'].eql?('delivered.cerny.cc') %>
+  [[acme.domains]]
+    main = '*.cerny.cc'
+    sans = ['cerny.cc']
+  <%- end %>
+<%- end %>
+
+[file]
+  <%- if node['domain'].eql?('infra.cerny.cc') %>
+  [backends]
+    [backends.pve]
+      [backends.pve.servers]
+        [backends.pve.servers.server0]
+          url = "https://<%= node['fqdn'] %>:8006"
+
+  [frontends]
+    [frontends.pve]
+      entryPoints = [ "https" ]
+      backend = "pve"
+      passHostHeader = true
+      passTLSCert = true
+
+      [frontends.pve.routes]
+        [frontends.pve.routes.route0]
+          rule = "Host:pve.infra.cerny.cc"
+
+  <%- end %>
+  <%- if node['domain'].eql?('delivered.cerny.cc') %>
+  [backends]
+    [backends.acme-pve01]
+      [backends.acme-pve01.servers]
+        [backends.acme-pve01.servers.pve01]
+          url = "http://pve01.infra.cerny.cc:80"
+
+    [backends.acme-pve02]
+      [backends.acme-pve02.servers]
+        [backends.acme-pve02.servers.pve02]
+          url = "http://pve02.infra.cerny.cc:80"
+
+    [backends.acme-pve03]
+      [backends.acme-pve03.servers]
+        [backends.acme-pve03.servers.pve03]
+          url = "http://pve03.infra.cerny.cc:80"
+
+  [frontends]
+    [frontends.acme-pve01]
+      entryPoints = [ "http" ]
+      backend = "acme-pve01"
+      passHostHeader = true
+      [frontends.acme-pve01.routes]
+        [frontends.acme-pve01.routes.route0]
+          rule = "Host:pve01.infra.cerny.cc;PathPrefix:.well-known/acme-challenge"
+
+    [frontends.acme-pve02]
+      entryPoints = [ "http" ]
+      backend = "acme-pve02"
+      passHostHeader = true
+      [frontends.acme-pve02.routes]
+        [frontends.acme-pve02.routes.route0]
+          rule = "Host:pve02.infra.cerny.cc;PathPrefix:.well-known/acme-challenge"
+
+    [frontends.acme-pve03]
+      entryPoints = [ "http" ]
+      backend = "acme-pve03"
+      passHostHeader = true
+      [frontends.acme-pve03.routes]
+        [frontends.acme-pve03.routes.route0]
+          rule = "Host:pve03.infra.cerny.cc;PathPrefix:.well-known/acme-challenge"
+
+    <%- end %>

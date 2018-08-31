@@ -16,7 +16,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-include_recipe "cerny-loadbalancer::proxy"
+habitat_channel = case node['domain']
+when 'acceptance.cerny.cc'
+  'unstable'
+when 'integration.cerny.cc'
+  'stable'
+else
+  node['domain'].split('.').first
+end
 
 docker_service 'default' do
   action [:create, :start]
@@ -25,9 +32,17 @@ end
 %w(
   quay.io/coreos/dnsmasq
   ncerny/matchbox
+).each do |image|
+  docker_image image do
+    action :pull
+    tag 'latest'
+    not_if { node['kernel']['release'].end_with?('pve') }
+  end
+end
+
+%w(
   consul
   traefik
-  nginxdemos/hello
 ).each do |image|
   docker_image image do
     action :pull
@@ -35,20 +50,47 @@ end
   end
 end
 
-docker_image 'nginx' do
-  action :pull
-  tag 'stable-alpine'
+docker_volume 'consul' do
+  action :create
+end
+
+docker_container 'consul' do
+  memory '512m'
+  restart_policy 'unless-stopped'
+  network_mode 'host'
+  env node['consul']['config']
+  command <<-EOC
+    agent -server \
+      -bind=#{node['ipaddress']} \
+      -retry-join=proxy01 \
+      -retry-join=proxy02 \
+      -retry-join=proxy03 \
+      -bootstrap-expect=3 \
+      -datacenter=#{node['domain'].split('.').first} \
+      -ui
+  EOC
+  volumes [
+    'consul:/consul/data'
+  ]
 end
 
 directory '/etc/traefik'
+directory '/etc/traefik/config.d'
 
 template '/etc/traefik/traefik.toml' do
   source 'traefik.toml.erb'
+  notifies :run, 'docker_exec[upload traefik configuration to kv store]'
+  notifies :restart, 'docker_container[traefik]'
 end
 
 docker_container 'traefik' do
+  memory '2048m'
+  restart_policy 'unless-stopped'
   repo 'traefik'
   network_mode 'host'
+  env [
+    "DO_AUTH_TOKEN=#{::File.read('/root/.traefik/digitalocean.key').strip}"
+  ]
   volumes [
     '/var/run/docker.sock:/var/run/docker.sock',
     '/etc/traefik:/etc/traefik'
@@ -56,33 +98,47 @@ docker_container 'traefik' do
   command '--api --docker --consul'
 end
 
-docker_container 'hello' do
-  repo 'nginxdemos/hello'
-  labels [
-    "traefik.frontend.rule:Host:whoami.#{node['domain']}"
-    ]
+docker_exec 'upload traefik configuration to kv store' do
+  action :nothing
+  container 'traefik'
+  command %w( /traefik storeconfig --consul )
 end
 
 docker_container 'matchbox' do
+  memory '256m'
+  restart_policy 'unless-stopped'
   repo 'ncerny/matchbox'
-  command '--channel delivered --strategy at-once'
+  command "--channel #{habitat_channel} --strategy at-once"
   labels [
-    "traefik.frontend.rule:Host:matchbox.#{node['domain']}"
+    "traefik.frontend.entryPoints:http",
+    "traefik.frontend.rule:Host:matchbox.#{node['domain']},matchbox"
     ]
+  not_if { node['kernel']['release'].end_with?('pve') }
 end
 
-docker_volume 'consul' do
-  action :create
-end
-
-docker_container 'consul' do
+docker_container 'dnsmasq' do
+  memory '256m'
+  restart_policy 'unless-stopped'
+  repo 'quay.io/coreos/dnsmasq'
   network_mode 'host'
-  env 'CONSUL_LOCAL_CONFIG={"skip_leave_on_interrupt": true}'
-  command "agent -server -bind=#{node['ipaddress']} -retry-join=proxy01 -retry-join=proxy02 -retry-join=proxy03 -bootstrap-expect=3 -ui"
-  volumes [
-    'consul:/consul'
-  ]
-  labels [
-    "traefik.frontend.rule:Host:consul.#{node['domain']}"
-  ]
+  cap_add %w(NET_ADMIN)
+  command <<-EOF
+    -d -q \
+    --no-poll \
+    --no-resolv \
+    --no-poll \
+    --no-hosts \
+    --local-service \
+    --dhcp-range=#{node['network']['default_gateway']},proxy,255.255.255.0 \
+    --enable-tftp --tftp-root=/var/lib/tftpboot \
+    --dhcp-userclass=set:ipxe,iPXE \
+    --pxe-service=tag:#ipxe,x86PC,"PXE chainload to iPXE",undionly.kpxe \
+    --pxe-service=tag:ipxe,x86PC,"iPXE",http://matchbox/boot.ipxe \
+    --log-queries \
+    --log-dhcp \
+    --cache-size=1000 \
+    --server=/consul/127.0.0.1#8600 \
+    --server=#{node['network']['default_gateway']}
+  EOF
+  not_if { node['kernel']['release'].end_with?('pve') }
 end
